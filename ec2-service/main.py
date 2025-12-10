@@ -23,7 +23,7 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 500
+MAX_TREE_LINES = 300  # Reducido para repos grandes
 MAX_FILE_SIZE_KB = 50
 
 # Security
@@ -167,10 +167,10 @@ def call_ollama(prompt: str) -> str:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 2000
+                    "num_predict": 1500  # Reducido para ser más rápido
                 }
             },
-            timeout=400
+            timeout=900  
         )
         response.raise_for_status()
         result = response.json()
