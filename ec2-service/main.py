@@ -170,7 +170,7 @@ def call_ollama(prompt: str) -> str:
                     "num_predict": 2000
                 }
             },
-            timeout=120
+            timeout=400
         )
         response.raise_for_status()
         result = response.json()
@@ -273,15 +273,27 @@ Estructura del repositorio:
 Archivos clave (extractos):
 {json.dumps(key_files, ensure_ascii=False, indent=2)}
 
-Genera UN diagrama MERMAID (usa flowchart TD o graph TD) que muestre:
-1. Los servicios o módulos principales identificados
-2. Controladores, servicios y capas de la aplicación
-3. Dependencias y relaciones entre módulos
-4. Bases de datos, APIs externas o servicios de infraestructura
-5. Flujos de datos principales
+Genera UN diagrama MERMAID (usa flowchart TD o graph TD) que muestre SOLO lo que realmente existe en el repositorio:
+
+REGLAS ESTRICTAS:
+- SOLO incluye componentes, archivos, módulos o servicios que realmente existen en la estructura mostrada arriba
+- NO inventes ni asumas componentes que no están presentes
+- Si el repositorio solo tiene un README, muestra solo el README
+- Si no hay servicios, controladores o bases de datos, NO los incluyas
+- Si hay archivos de configuración (package.json, requirements.txt, Dockerfile, etc.), inclúyelos
+- Si hay directorios con código, muéstralos como módulos
+- Las relaciones deben basarse en imports, dependencias o estructura real del código
+
+Genera el diagrama mostrando:
+1. Archivos y directorios principales que existen
+2. Relaciones entre archivos basadas en imports o dependencias reales (si las hay)
+3. Configuraciones o dependencias externas mencionadas en archivos de configuración
+4. NADA MÁS - solo lo que realmente existe
 
 IMPORTANTE: 
 - Devuelve SOLO el código Mermaid, sin explicaciones adicionales
+- Si el repositorio es muy simple, el diagrama será simple (está bien)
+- NO inventes componentes para hacer el diagrama más complejo
 - Usa nombres descriptivos y claros para los nodos
 - Incluye estilos básicos si es necesario
 - El diagrama debe ser claro y legible
