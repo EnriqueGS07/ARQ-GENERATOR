@@ -32,8 +32,8 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 500
-MAX_FILE_SIZE_KB = 50
+MAX_TREE_LINES = 300  # Reducido para velocidad
+MAX_FILE_SIZE_KB = 40  # Reducido para velocidad
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -221,7 +221,8 @@ def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
                 "stream": False,
                 "options": {
                     "temperature": 0.1,
-                    "num_predict": max_tokens
+                    "num_predict": max_tokens,
+                    "num_thread": 2  # Optimizado para t3.large
                 }
             },
             timeout=1200
@@ -241,74 +242,94 @@ def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=503, detail=f"Error al conectar con Ollama: {str(e)}")
 
-def process_structure_with_llm(structure: Dict[str, Any]) -> Dict[str, Any]:
+def generate_mermaid_directly(structure: Dict[str, Any]) -> str:
     """
-    Componente 2: Procesador de lenguaje (Razonamiento Estructural)
-    Usa LLM para interpretar la estructura, identificar patrones de arquitectura,
-    clasificar componentes y detectar microservicios
+    Componente 2 y 3 combinados: Genera diagrama Mermaid directamente
+    Optimizado para velocidad - una sola llamada al LLM
     """
-    tree_summary = structure["tree"][:4000]  # Limitar para el prompt
-    key_files_summary = json.dumps(
-        {k: v[:600] for k, v in list(structure["key_files"].items())[:10]},
-        ensure_ascii=False, indent=1
-    )
+    tree_summary = structure["tree"][:2000]  # Reducido para ser más rápido
+    modules = structure["modules"]
+    technologies = structure["technologies"]
     
-    prompt = f"""Analiza la siguiente estructura de repositorio e identifica patrones de arquitectura.
+    # Construir lista de componentes reales (solo nombres, sin duplicados)
+    components_list = []
+    seen = set()
+    
+    # Agregar módulos
+    for module in modules:
+        if module and module not in seen:
+            components_list.append(module)
+            seen.add(module.lower())
+    
+    # Agregar directorios principales del árbol
+    for line in tree_summary.split('\n')[:50]:  # Solo primeras 50 líneas
+        line = line.strip()
+        if line and not line.startswith('.') and '/' in line:
+            dir_name = line.split('/')[0].strip()
+            if dir_name and dir_name.lower() not in seen and len(dir_name) > 1:
+                components_list.append(dir_name)
+                seen.add(dir_name.lower())
+    
+    # Agregar archivos clave importantes
+    for file_path in list(structure["key_files"].keys())[:5]:  # Solo 5 archivos
+        file_name = os.path.basename(file_path)
+        if file_name and file_name.lower() not in seen:
+            components_list.append(file_name)
+            seen.add(file_name.lower())
+    
+    prompt = f"""Genera un diagrama Mermaid de arquitectura basado en esta estructura de repositorio.
 
 ESTRUCTURA DEL REPOSITORIO:
 {tree_summary}
 
-ARCHIVOS CLAVE:
-{key_files_summary}
+COMPONENTES REALES ENCONTRADOS:
+{', '.join(components_list) if components_list else 'Ninguno detectado'}
 
-MÓDULOS DETECTADOS: {', '.join(structure['modules']) if structure['modules'] else 'Ninguno'}
-TECNOLOGÍAS DETECTADAS: {', '.join(structure['technologies']) if structure['technologies'] else 'Desconocidas'}
+MÓDULOS: {', '.join(modules) if modules else 'Ninguno'}
+TECNOLOGÍAS: {', '.join(technologies) if technologies else 'Desconocidas'}
 
-TAREA: Analiza y clasifica la arquitectura del repositorio. Responde SOLO con un JSON válido con esta estructura exacta:
+INSTRUCCIONES CRÍTICAS:
 
-{{
-    "components": ["lista de componentes principales encontrados"],
-    "architecture_type": "tipo de arquitectura detectada (monolito, microservicios, modular, etc.)",
-    "is_microservices": true/false,
-    "modules": ["lista de módulos identificados"],
-    "layers": ["lista de capas detectadas si las hay"],
-    "relationships": [
-        {{"from": "componente1", "to": "componente2", "type": "tipo de relación"}},
-        {{"from": "componente2", "to": "componente3", "type": "dependencia"}}
-    ],
-    "technologies": ["tecnologías detectadas"],
-    "patterns": ["patrones de diseño detectados si los hay"]
-}}
+1. USA SOLO los nombres EXACTOS que aparecen en "COMPONENTES REALES ENCONTRADOS" y "MÓDULOS"
+2. NO uses texto genérico como "MÓDULOS DETECTADOS", "Componente 1", "Capa 1", etc.
+3. Si hay módulos como "drivers", "payments", "rides", "users" - usa esos nombres EXACTOS
+4. Si hay archivos como "pom.xml", "README.md" - inclúyelos con sus nombres reales
 
-REGLAS:
-- SOLO incluye componentes que realmente existen en la estructura
-- NO inventes componentes como "API Gateway", "Backend", "Database" si no están en la estructura
-- Las relaciones deben basarse en la estructura real (jerarquía de directorios, imports, dependencias)
-- Si hay múltiples módulos en el mismo nivel, probablemente son microservicios
-- Responde SOLO con el JSON, sin explicaciones adicionales"""
+SINTAXIS:
+- Primera línea: flowchart TD
+- Nodos: A[NombreReal] donde NombreReal es el nombre exacto del componente
+- Relaciones: A --> B (solo -->)
+- Indentación: 4 espacios
 
-    llm_output = call_ollama(prompt, max_tokens=1500)
+EJEMPLO CORRECTO (si hay módulos drivers, payments):
+```mermaid
+flowchart TD
+    A[drivers]
+    B[payments]
+    C[rides]
+    D[users]
+    A --> E[pom.xml]
+    B --> F[pom.xml]
+```
+
+EJEMPLO INCORRECTO (NO hagas esto):
+```mermaid
+flowchart TD
+    A[MÓDULOS DETECTADOS]
+    A --> B[Módulo 1]
+```
+(INCORRECTO: usa nombres genéricos en lugar de los reales)
+
+Genera SOLO el código Mermaid válido usando los nombres REALES de los componentes:"""
+
+    llm_output = call_ollama(prompt, max_tokens=2000)
+    mermaid_code = extract_mermaid_code(llm_output)
     
-    # Extraer JSON del output
-    json_match = re.search(r'\{.*\}', llm_output, re.DOTALL)
-    if json_match:
-        try:
-            analysis = json.loads(json_match.group())
-            return analysis
-        except json.JSONDecodeError:
-            pass
+    # Asegurar que empiece con flowchart TD
+    if not mermaid_code.strip().startswith(('flowchart', 'graph')):
+        mermaid_code = "flowchart TD\n" + mermaid_code
     
-    # Fallback: análisis básico
-    return {
-        "components": structure["modules"],
-        "architecture_type": "unknown",
-        "is_microservices": len(structure["modules"]) > 3,
-        "modules": structure["modules"],
-        "layers": [],
-        "relationships": [],
-        "technologies": structure["technologies"],
-        "patterns": []
-    }
+    return mermaid_code
 
 # ============================================================================
 # COMPONENTE 3: GENERADOR DE DIAGRAMAS
@@ -353,77 +374,6 @@ def extract_mermaid_code(text: str) -> str:
     
     return text.strip()
 
-def generate_mermaid_diagram(structure: Dict[str, Any], analysis: Dict[str, Any]) -> str:
-    """
-    Componente 3: Generador de diagramas
-    Genera código Mermaid a partir de la estructura extraída y el análisis del LLM
-    Usa los resultados del razonamiento estructural para generar el diagrama
-    """
-    tree_summary = structure["tree"][:3000]
-    components = analysis.get("components", structure["modules"])
-    relationships = analysis.get("relationships", [])
-    is_microservices = analysis.get("is_microservices", False)
-    architecture_type = analysis.get("architecture_type", "unknown")
-    layers = analysis.get("layers", [])
-    
-    prompt = f"""Genera un diagrama Mermaid de arquitectura basado en el análisis estructural realizado.
-
-ANÁLISIS ESTRUCTURAL:
-- Tipo de arquitectura: {architecture_type}
-- Es microservicios: {is_microservices}
-- Componentes identificados: {', '.join(components[:20])}
-- Módulos: {', '.join(analysis.get('modules', [])[:15])}
-- Capas detectadas: {', '.join(layers) if layers else 'Ninguna'}
-- Relaciones identificadas: {len(relationships)} relaciones
-
-RELACIONES DETECTADAS:
-{json.dumps(relationships[:20], ensure_ascii=False, indent=2)}
-
-ESTRUCTURA DEL REPOSITORIO (referencia):
-{tree_summary}
-
-INSTRUCCIONES PARA GENERAR EL DIAGRAMA:
-
-1. SINTAXIS CORRECTA:
-   - Primera línea: flowchart TD
-   - Nodos: A[Nombre del componente]
-   - Relaciones: A --> B (usa SOLO -->)
-   - Indentación: 4 espacios
-
-2. CONTENIDO DEL DIAGRAMA:
-   - Incluye TODOS los componentes principales identificados
-   - Incluye TODOS los módulos detectados
-   - Crea relaciones basadas en el análisis estructural
-   - Si hay capas, organízalas jerárquicamente
-   - Si es microservicios, muestra cada servicio como nodo separado
-   - El diagrama debe ser COMPLETO y útil
-
-3. REGLAS ESTRICTAS:
-   - SOLO usa componentes que están en la lista de componentes identificados
-   - NO inventes: "API Gateway", "Backend", "Database", "Frontend" si no están en los componentes
-   - Las relaciones deben reflejar las relaciones detectadas en el análisis
-   - Genera un diagrama COMPLETO con al menos 10-20 nodos si hay suficiente estructura
-
-4. EJEMPLO DE FORMATO:
-```mermaid
-flowchart TD
-    A[Componente1]
-    B[Componente2]
-    C[Componente3]
-    A --> B
-    B --> C
-```
-
-Genera SOLO el código Mermaid válido, sin explicaciones adicionales:"""
-
-    llm_output = call_ollama(prompt, max_tokens=2000)
-    mermaid_code = extract_mermaid_code(llm_output)
-    
-    # Asegurar que empiece con flowchart TD
-    if not mermaid_code.strip().startswith(('flowchart', 'graph')):
-        mermaid_code = "flowchart TD\n" + mermaid_code
-    
-    return mermaid_code
 
 # ============================================================================
 # ENDPOINT PRINCIPAL
@@ -471,18 +421,11 @@ def analyze(req: AnalyzeRequest):
         # PASO 1: Extraer estructura del repositorio
         structure = extract_repository_structure(tmp, max_depth=req.depth)
         
-        # PASO 2: Procesar con LLM para razonamiento estructural
-        analysis = process_structure_with_llm(structure)
-        
-        # PASO 3: Generar diagrama Mermaid
-        mermaid_code = generate_mermaid_diagram(structure, analysis)
+        # PASO 2: Generar diagrama Mermaid directamente (optimizado - una sola llamada LLM)
+        mermaid_code = generate_mermaid_directly(structure)
         
         return {
-            "mermaid": mermaid_code,
-            "repo_size_mb": round(total_size, 2),
-            "files_analyzed": len(structure["key_files"]),
-            "modules_detected": len(structure["modules"]),
-            "architecture_analysis": analysis
+            "mermaid": mermaid_code
         }
     
     except HTTPException:
