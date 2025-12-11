@@ -1,12 +1,13 @@
-const DEFAULT_API_URL = "http://52.204.44.230:8000";
+const DEFAULT_API_URL = "http://35.174.172.67:8000";
 
 let currentMermaidCode = "";
-let mermaidInitialized = false;
 
 document.addEventListener("DOMContentLoaded", () => {
   initializeMermaid();
   setupEventListeners();
-  checkHealth();
+  setTimeout(() => {
+    checkHealth();
+  }, 500);
 });
 
 function initializeMermaid() {
@@ -20,19 +21,38 @@ function initializeMermaid() {
       curve: "basis",
     },
   });
-  mermaidInitialized = true;
 }
 
 function setupEventListeners() {
-  document
-    .getElementById("analyzeBtn")
-    .addEventListener("click", analyzeRepository);
-  document.getElementById("copyBtn").addEventListener("click", copyMermaidCode);
-  document.getElementById("downloadBtn").addEventListener("click", downloadSVG);
-  document.getElementById("uploadS3Btn").addEventListener("click", showS3Modal);
-  document.querySelector(".close").addEventListener("click", closeS3Modal);
-  document.getElementById("cancelBtn").addEventListener("click", closeS3Modal);
-  document.getElementById("uploadBtn").addEventListener("click", uploadToS3);
+  const analyzeBtn = document.getElementById("analyzeBtn");
+  const copyBtn = document.getElementById("copyBtn");
+  const downloadBtn = document.getElementById("downloadBtn");
+  const uploadS3Btn = document.getElementById("uploadS3Btn");
+  const closeBtn = document.querySelector(".close");
+  const cancelBtn = document.getElementById("cancelBtn");
+  const uploadBtn = document.getElementById("uploadBtn");
+
+  if (analyzeBtn) {
+    analyzeBtn.addEventListener("click", analyzeRepository);
+  }
+  if (copyBtn) {
+    copyBtn.addEventListener("click", copyMermaidCode);
+  }
+  if (downloadBtn) {
+    downloadBtn.addEventListener("click", downloadSVG);
+  }
+  if (uploadS3Btn) {
+    uploadS3Btn.addEventListener("click", showS3Modal);
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeS3Modal);
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", closeS3Modal);
+  }
+  if (uploadBtn) {
+    uploadBtn.addEventListener("click", uploadToS3);
+  }
 }
 
 function getApiUrl() {
@@ -42,7 +62,20 @@ function getApiUrl() {
 async function checkHealth() {
   try {
     const apiUrl = getApiUrl();
-    const response = await fetch(`${apiUrl}/health`);
+    const response = await fetch(`${apiUrl}/health`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      mode: "cors",
+      cache: "no-cache",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
     const data = await response.json();
 
     if (data.status === "ok") {
@@ -50,9 +83,33 @@ async function checkHealth() {
         `✅ Servicio disponible - Ollama: ${data.ollama} - Modelo: ${data.model}`,
         "success"
       );
+    } else {
+      showStatus(
+        `⚠️ Servicio responde pero con estado: ${data.status}`,
+        "info"
+      );
     }
   } catch (error) {
-    showStatus("⚠️ No se pudo verificar el estado del servicio", "info");
+    let errorMessage = "⚠️ No se pudo verificar el estado del servicio";
+
+    if (error.name === "AbortError" || error.message.includes("aborted")) {
+      errorMessage =
+        "⏱️ Timeout: El servicio no responde. Verifica que esté corriendo y accesible desde internet.";
+    } else if (
+      error.message.includes("Failed to fetch") ||
+      error.message.includes("NetworkError") ||
+      error.message.includes("ERR_CONNECTION_TIMED_OUT") ||
+      error.message.includes("ERR_CONNECTION_REFUSED")
+    ) {
+      errorMessage = `❌ Error de conexión: No se puede conectar a ${getApiUrl()}. Verifica que el servicio esté corriendo y accesible.`;
+    } else if (error.message.includes("CORS")) {
+      errorMessage =
+        "❌ Error CORS: El servidor no permite peticiones desde este origen.";
+    } else {
+      errorMessage = `❌ Error: ${error.message}`;
+    }
+
+    showStatus(errorMessage, "error");
   }
 }
 
@@ -62,13 +119,13 @@ async function analyzeRepository() {
   const apiUrl = getApiUrl();
 
   if (!repoUrl) {
-    showStatus("!Por favor ingresa una URL de repositorio", "error");
+    showStatus("❌ Por favor ingresa una URL de repositorio", "error");
     return;
   }
 
   if (!isValidRepoUrl(repoUrl)) {
     showStatus(
-      "!URL de repositorio inválida. Debe ser de GitHub, GitLab o Bitbucket",
+      "❌ URL de repositorio inválida. Debe ser de GitHub, GitLab o Bitbucket",
       "error"
     );
     return;
@@ -78,25 +135,24 @@ async function analyzeRepository() {
   const btnText = analyzeBtn.querySelector(".btn-text");
   const btnLoader = analyzeBtn.querySelector(".btn-loader");
 
-  analyzeBtn.disabled = true;
-  btnText.textContent = "Analizando...";
-  btnLoader.style.display = "inline-block";
+  if (analyzeBtn) analyzeBtn.disabled = true;
+  if (btnText) btnText.textContent = "Analizando...";
+  if (btnLoader) btnLoader.style.display = "inline-block";
 
   hideStatus();
   hideDiagram();
 
   try {
-    const headers = {
-      "Content-Type": "application/json",
-    };
-
     const response = await fetch(`${apiUrl}/analyze`, {
       method: "POST",
-      headers: headers,
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
         repo_url: repoUrl,
         depth: depth,
       }),
+      mode: "cors",
     });
 
     const data = await response.json();
@@ -115,12 +171,11 @@ async function analyzeRepository() {
       throw new Error("No se recibió código Mermaid en la respuesta");
     }
   } catch (error) {
-    console.error("Error:", error);
     showStatus(`❌ Error: ${error.message}`, "error");
   } finally {
-    analyzeBtn.disabled = false;
-    btnText.textContent = "Analizar Repositorio";
-    btnLoader.style.display = "none";
+    if (analyzeBtn) analyzeBtn.disabled = false;
+    if (btnText) btnText.textContent = "Analizar Repositorio";
+    if (btnLoader) btnLoader.style.display = "none";
   }
 }
 
@@ -147,14 +202,13 @@ async function displayDiagram(mermaidCode) {
     container.innerHTML = svg;
     showDiagram();
   } catch (error) {
-    console.error("Error rendering Mermaid:", error);
     container.innerHTML = `
-            <div style="color: #721c24; padding: 20px; text-align: center;">
-                <p>❌ Error al renderizar el diagrama</p>
-                <p style="font-size: 0.9em; margin-top: 10px;">${error.message}</p>
-                <p style="font-size: 0.8em; margin-top: 10px; color: #666;">Revisa el código Mermaid en el área de texto</p>
-            </div>
-        `;
+      <div style="color: #721c24; padding: 20px; text-align: center;">
+        <p>❌ Error al renderizar el diagrama</p>
+        <p style="font-size: 0.9em; margin-top: 10px;">${error.message}</p>
+        <p style="font-size: 0.8em; margin-top: 10px; color: #666;">Revisa el código Mermaid en el área de texto</p>
+      </div>
+    `;
     showDiagram();
   }
 }
@@ -207,9 +261,40 @@ function downloadSVG() {
   showStatus("✅ Diagrama descargado exitosamente", "success");
 }
 
-function showS3Modal() {
+async function loadAWSSDK() {
+  return new Promise((resolve, reject) => {
+    if (typeof AWS !== "undefined") {
+      resolve(AWS);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://sdk.amazonaws.com/js/aws-sdk-2.1000.0.min.js";
+    script.onload = () => resolve(AWS);
+    script.onerror = () => reject(new Error("No se pudo cargar AWS SDK"));
+    document.head.appendChild(script);
+  });
+}
+
+async function showS3Modal() {
   document.getElementById("s3Modal").style.display = "block";
   document.getElementById("s3Status").style.display = "none";
+
+  if (typeof AWS === "undefined") {
+    const statusDiv = document.getElementById("s3Status");
+    statusDiv.style.display = "block";
+    statusDiv.className = "status-message info";
+    statusDiv.textContent = "Cargando AWS SDK...";
+
+    try {
+      await loadAWSSDK();
+      statusDiv.style.display = "none";
+    } catch (error) {
+      statusDiv.className = "status-message error";
+      statusDiv.textContent =
+        "❌ No se pudo cargar AWS SDK. La funcionalidad de S3 no está disponible.";
+    }
+  }
 }
 
 function closeS3Modal() {
@@ -217,6 +302,18 @@ function closeS3Modal() {
 }
 
 async function uploadToS3() {
+  if (typeof AWS === "undefined") {
+    try {
+      await loadAWSSDK();
+    } catch (error) {
+      showS3Status(
+        "❌ No se pudo cargar AWS SDK. La funcionalidad de S3 no está disponible.",
+        "error"
+      );
+      return;
+    }
+  }
+
   const bucket = document.getElementById("s3Bucket").value.trim();
   const key = document.getElementById("s3Key").value.trim();
   const region = document.getElementById("s3Region").value.trim();
@@ -277,7 +374,6 @@ async function uploadToS3() {
       showStatus(`✅ Diagrama subido a S3: ${s3Url}`, "success");
     }, 2000);
   } catch (error) {
-    console.error("Error uploading to S3:", error);
     showS3Status(`❌ Error al subir a S3: ${error.message}`, "error");
   } finally {
     uploadBtn.disabled = false;
