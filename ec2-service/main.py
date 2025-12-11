@@ -158,6 +158,37 @@ def read_key_files(repo_path: str, max_depth: int = 2, patterns: Optional[list] 
 
 def call_ollama(prompt: str) -> str:
     """Llama a la API de Ollama para generar el diagrama Mermaid"""
+    # Verificar que Ollama esté disponible
+    try:
+        health_check = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
+        if health_check.status_code != 200:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Ollama no está disponible. Verifica que el servicio esté corriendo en {OLLAMA_API_URL}"
+            )
+        
+        # Verificar que el modelo esté disponible
+        models_response = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
+        if models_response.status_code == 200:
+            models_data = models_response.json()
+            available_models = [model.get("name", "") for model in models_data.get("models", [])]
+            if OLLAMA_MODEL not in available_models:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Modelo '{OLLAMA_MODEL}' no está disponible. Modelos disponibles: {', '.join(available_models[:5])}. Ejecuta: ollama pull {OLLAMA_MODEL}"
+                )
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se puede conectar con Ollama en {OLLAMA_API_URL}. Verifica que el servicio esté corriendo."
+        )
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error al verificar Ollama: {str(e)}"
+        )
+    
+    # Llamar a la API de generación
     try:
         response = requests.post(
             f"{OLLAMA_API_URL}/api/generate",
@@ -175,6 +206,16 @@ def call_ollama(prompt: str) -> str:
         response.raise_for_status()
         result = response.json()
         return result.get("response", "")
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Modelo '{OLLAMA_MODEL}' no encontrado. Ejecuta en la EC2: ollama pull {OLLAMA_MODEL}"
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error HTTP de Ollama: {str(e)}"
+        )
     except requests.exceptions.Timeout as e:
         raise HTTPException(
             status_code=504,  # Gateway Timeout
@@ -224,194 +265,6 @@ def extract_mermaid_code(text: str) -> str:
     
     # Si todo falla, devolver el texto completo
     return text.strip()
-
-def fix_mermaid_syntax(mermaid_code: str) -> str:
-    """Corrige errores comunes de sintaxis en diagramas Mermaid"""
-    if not mermaid_code:
-        return "flowchart TD\n    A[Empty]"
-    
-    lines = mermaid_code.split('\n')
-    fixed_lines = []
-    has_declaration = False
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Verificar si tiene declaración de tipo de diagrama
-        if line.lower().startswith(('flowchart', 'graph', 'classdiagram', 'sequencediagram')):
-            has_declaration = True
-            # Asegurar que sea flowchart TD (más común y simple)
-            if not line.lower().startswith('flowchart'):
-                if 'graph' in line.lower():
-                    fixed_lines.append('flowchart TD')
-                else:
-                    fixed_lines.append('flowchart TD')
-            else:
-                # Asegurar que tenga dirección (TD, LR, etc.)
-                if 'TD' not in line.upper() and 'LR' not in line.upper() and 'BT' not in line.upper() and 'RL' not in line.upper():
-                    fixed_lines.append('flowchart TD')
-                else:
-                    fixed_lines.append(line)
-            continue
-        
-        # Corregir sintaxis de relaciones
-        # Reemplazar ->> por --> (sintaxis de sequenceDiagram en flowchart)
-        if '->>' in line:
-            line = line.replace('->>', '-->')
-        
-        # Corregir relaciones sin formato correcto
-        if '->' in line or '-->' in line or '---' in line:
-            # Asegurar formato correcto: A --> B
-            parts = re.split(r'(-+>|->|--)', line)
-            if len(parts) >= 3:
-                # Limpiar espacios
-                left = parts[0].strip()
-                arrow = parts[1]
-                right = parts[2].strip()
-                
-                # Normalizar flecha a -->
-                if arrow != '-->':
-                    arrow = '-->'
-                
-                # Asegurar que los nodos tengan formato correcto
-                # Si no tienen [], agregarlos
-                if not left.startswith('[') and not left[0].isupper():
-                    # Es un ID, buscar si tiene label
-                    if '[' in left:
-                        left = left
-                    else:
-                        # Extraer ID si tiene formato ID[Label]
-                        if '[' in left:
-                            left = left
-                        else:
-                            left = f"{left}[{left}]"
-                
-                if not right.startswith('[') and not right[0].isupper():
-                    if '[' in right:
-                        right = right
-                    else:
-                        # Extraer ID si tiene formato ID[Label]
-                        if '[' in right:
-                            right = right
-                        else:
-                            right = f"{right}[{right}]"
-                
-                line = f"    {left}{arrow}{right}"
-        
-        # Corregir nodos sin formato correcto
-        elif '[' in line or ']' in line or '(' in line or ')' in line or '{' in line or '}' in line:
-            # Es un nodo, asegurar formato correcto
-            if not line.startswith('    '):
-                line = '    ' + line.lstrip()
-            
-            # Asegurar que tenga formato: ID[Label] o ID(Label) o ID{Label}
-            if '[' in line and ']' not in line:
-                line = line + ']'
-            elif ']' in line and '[' not in line:
-                line = '[' + line
-        
-        # Agregar línea si no está vacía
-        if line:
-            fixed_lines.append(line)
-    
-    # Si no tiene declaración, agregarla
-    if not has_declaration:
-        fixed_lines.insert(0, 'flowchart TD')
-    
-    result = '\n'.join(fixed_lines)
-    
-    # Validación final: asegurar que tenga al menos un nodo
-    if not re.search(r'\[.*?\]|\(.*?\)|\{.*?\}', result):
-        result = "flowchart TD\n    A[Repository]"
-    
-    return result
-
-def validate_mermaid_nodes(mermaid_code: str, tree_txt: str) -> str:
-    """Valida que los nodos del diagrama Mermaid existan en la estructura"""
-    import re
-    
-    # Extraer nombres de nodos del diagrama Mermaid
-    node_pattern = r'\[([^\]]+)\]|\(([^\)]+)\)|\{([^\}]+)\}|([A-Z]\w+)\['
-    nodes_in_diagram = []
-    for match in re.finditer(node_pattern, mermaid_code):
-        node = match.group(1) or match.group(2) or match.group(3) or match.group(4)
-        if node:
-            nodes_in_diagram.append(node.strip())
-    
-    # Extraer nombres de directorios/archivos de la estructura
-    structure_items = set()
-    for line in tree_txt.split('\n'):
-        line = line.strip()
-        if line and not line.startswith('.'):
-            # Extraer nombres de directorios y archivos
-            parts = line.split('/')
-            for part in parts:
-                part = part.strip().rstrip('/').rstrip('.md').rstrip('.xml').rstrip('.json')
-                if part and part != '.':
-                    structure_items.add(part.lower())
-    
-    # Palabras prohibidas que indican alucinaciones
-    forbidden_words = [
-        'api gateway', 'gateway', 'aws lambda', 'lambda', 'serverless',
-        'backend', 'back-end', 'back end', 'frontend', 'front-end', 'front end',
-        'database', 'db', 'postgresql', 'mysql', 'mongodb', 'redis',
-        'server', 'api', 'rest api', 'graphql', 'microservice'
-    ]
-    
-    # Filtrar nodos que no existen en la estructura o contienen palabras prohibidas
-    valid_lines = []
-    lines = mermaid_code.split('\n')
-    
-    for line in lines:
-        line_lower = line.lower()
-        
-        # Si es la declaración del diagrama, mantenerla
-        if line_lower.strip().startswith(('flowchart', 'graph')):
-            valid_lines.append(line)
-            continue
-        
-        # Verificar si contiene palabras prohibidas
-        has_forbidden = any(fw in line_lower for fw in forbidden_words)
-        
-        # Verificar si el nodo existe en la estructura
-        node_match = re.search(node_pattern, line)
-        if node_match:
-            node = (node_match.group(1) or node_match.group(2) or 
-                   node_match.group(3) or node_match.group(4) or '').strip().lower()
-            
-            # Si tiene palabra prohibida, omitir la línea
-            if has_forbidden:
-                continue
-            
-            # Verificar si el nodo existe en la estructura (búsqueda flexible)
-            node_exists = any(
-                node in item or item in node or 
-                node.replace(' ', '').replace('-', '').replace('_', '') in item.replace(' ', '').replace('-', '').replace('_', '')
-                for item in structure_items
-            )
-            
-            if node_exists or not node:  # Mantener si existe o es un ID sin label
-                valid_lines.append(line)
-        else:
-            # Si no tiene nodo pero es una relación válida, mantenerla
-            if '-->' in line or '---' in line:
-                valid_lines.append(line)
-    
-    result = '\n'.join(valid_lines)
-    
-    # Si se eliminaron demasiadas líneas, generar un diagrama simple
-    if len(valid_lines) < 3:
-        # Extraer solo los primeros 10 items reales de la estructura
-        real_items = list(structure_items)[:10]
-        if real_items:
-            simple_diagram = "flowchart TD\n"
-            for i, item in enumerate(real_items):
-                simple_diagram += f"    A{i}[{item}]\n"
-            return simple_diagram
-    
-    return result
 
 @app.post("/analyze", dependencies=[Depends(verify_api_key)])
 def analyze(req: AnalyzeRequest):
@@ -470,50 +323,55 @@ ESTRUCTURA REAL DEL REPOSITORIO:
 ARCHIVOS ENCONTRADOS:
 {json.dumps(key_files_limited, ensure_ascii=False, indent=1)}
 
-REGLAS ABSOLUTAS (NO LAS VIOLES):
+REGLAS ABSOLUTAS:
 
-1. PROHIBIDO inventar estos componentes (NUNCA los uses):
-   - "Amazon API Gateway", "API Gateway", "Gateway", "AWS Lambda", "Lambda"
-   - "Backend", "Back-end", "Frontend", "Front-end", "Server"
-   - "Database", "DB", "PostgreSQL", "MySQL", "MongoDB"
-   - "API", "REST API", "GraphQL", "Microservice"
-   - Cualquier componente que NO aparezca en la estructura de arriba
+1. PROHIBIDO inventar componentes que NO están en la estructura:
+   - NO "Amazon API Gateway", "API Gateway", "Gateway", "AWS Lambda"
+   - NO "Backend", "Frontend", "Server"
+   - NO "Database", "DB", "PostgreSQL", "MySQL"
+   - NO "API", "REST API", "GraphQL", "Microservice"
+   - SOLO usa nombres EXACTOS de directorios/archivos que aparecen arriba
 
-2. SOLO puedes usar:
-   - Nombres EXACTOS de directorios que aparecen en la estructura
-   - Nombres EXACTOS de archivos que aparecen en la estructura
-   - Nada más
-
-3. Sintaxis CORRECTA para flowchart:
-   - Primera línea: flowchart TD
-   - Nodos: A[Nombre exacto] o A[directorio]
-   - Relaciones: A --> B (SOLO si B está dentro de A en la estructura)
-   - NO uses: ->>, ---, -.-, ni otros símbolos
+2. VALIDACIÓN DE SINTAXIS (VERIFICA ANTES DE RESPONDER):
+   - Primera línea DEBE ser: flowchart TD
+   - Nodos: formato A[Nombre] donde A es un ID y Nombre es el directorio/archivo
+   - Relaciones: A --> B (usa SOLO -->, NO uses ->>, ---, -.-)
+   - Indentación: 4 espacios antes de cada línea (excepto la primera)
+   - Cada nodo en su propia línea
+   - Cada relación en su propia línea
    - NO mezcles tipos de nodos: usa solo [ ] para todos
 
-4. Si la estructura muestra:
-   - drivers/ → puedes usar: A[drivers]
-   - payments/ → puedes usar: B[payments]
-   - pom.xml → puedes usar: C[pom.xml]
-   - README.md → puedes usar: D[README.md]
+3. VALIDACIÓN DE RELACIONES:
+   - Solo crea relaciones si hay jerarquía real (B está dentro de A)
+   - Si drivers/ contiene pom.xml, entonces: A[drivers] --> B[pom.xml]
+   - NO inventes relaciones que no existen en la estructura
 
-EJEMPLO CORRECTO (si estructura tiene: drivers/, payments/, pom.xml):
+4. ANTES DE RESPONDER, VERIFICA:
+   ✓ ¿Empieza con "flowchart TD"?
+   ✓ ¿Todos los nodos tienen formato ID[Nombre]?
+   ✓ ¿Todas las relaciones usan --> (no ->>, ---, etc.)?
+   ✓ ¿Todos los nombres existen en la estructura?
+   ✓ ¿No hay componentes inventados?
+
+EJEMPLO CORRECTO:
 ```mermaid
 flowchart TD
     A[drivers]
     B[payments]
-    C[pom.xml]
+    C[rides]
+    D[users]
+    A --> E[pom.xml]
 ```
 
-EJEMPLO INCORRECTO (NUNCA hagas esto):
+EJEMPLO INCORRECTO (NO hagas esto):
 ```mermaid
 flowchart TD
-    A[Amazon API Gateway] --> B[Backend]
-    B --> C[Database]
+    A[Amazon API Gateway] ->> B[Backend]
+    B --- C[Database]
 ```
-(INCORRECTO porque "Amazon API Gateway", "Backend" y "Database" NO están en la estructura)
+(INCORRECTO: componentes inventados y sintaxis incorrecta)
 
-Genera SOLO el código Mermaid válido, sin explicaciones:"""
+Genera SOLO el código Mermaid válido y verificado, sin explicaciones:"""
 
         # Llamar a Ollama
         llm_output = call_ollama(prompt)
@@ -526,15 +384,6 @@ Genera SOLO el código Mermaid válido, sin explicaciones:"""
                 status_code=500,
                 detail="No se pudo generar un diagrama Mermaid válido"
             )
-        
-        # Corregir sintaxis
-        mermaid_code = fix_mermaid_syntax(mermaid_code)
-        
-        # Validar nodos y filtrar alucinaciones
-        mermaid_code = validate_mermaid_nodes(mermaid_code, tree_txt)
-        
-        # Corregir sintaxis nuevamente después de la validación
-        mermaid_code = fix_mermaid_syntax(mermaid_code)
         
         return {
             "mermaid": mermaid_code,
