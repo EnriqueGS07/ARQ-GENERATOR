@@ -167,14 +167,19 @@ def call_ollama(prompt: str) -> str:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 1500  # Reducido para ser más rápido
+                    "num_predict": 1000  # Reducido para ser más rápido
                 }
             },
-            timeout=900  
+            timeout=1200  # 20 minutos para repositorios muy grandes
         )
         response.raise_for_status()
         result = response.json()
         return result.get("response", "")
+    except requests.exceptions.Timeout as e:
+        raise HTTPException(
+            status_code=504,  # Gateway Timeout
+            detail=f"Ollama no respondió en 20 minutos. El repositorio es muy grande o el modelo está lento."
+        )
     except requests.exceptions.RequestException as e:
         raise HTTPException(
             status_code=503, 
