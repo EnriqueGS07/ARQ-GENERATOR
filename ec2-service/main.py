@@ -19,12 +19,12 @@ app = FastAPI(
 )
 
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-# Para t2.large, usar modelo quantizado: llama3:8b-instruct-q4_0
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+# Modelo optimizado para velocidad: llama3.2:3b-instruct-q4_0 (más rápido que llama3:8b)
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 300  # Reducido para repos grandes
-MAX_FILE_SIZE_KB = 50
+MAX_TREE_LINES = 150  # Reducido para ser más rápido
+MAX_FILE_SIZE_KB = 30  # Reducido para ser más rápido
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -167,7 +167,7 @@ def call_ollama(prompt: str) -> str:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 1000  # Reducido para ser más rápido
+                    "num_predict": 500  # Reducido para ser más rápido
                 }
             },
             timeout=1200  # 20 minutos para repositorios muy grandes
@@ -269,45 +269,25 @@ def analyze(req: AnalyzeRequest):
         tree_txt = repo_tree_text(tmp, max_depth=req.depth)
         key_files = read_key_files(tmp, max_depth=req.depth)
         
-        # Construir prompt mejorado
-        prompt = f"""Analiza la siguiente estructura de repositorio y genera un diagrama de arquitectura en formato Mermaid.
+        # Construir prompt optimizado (más corto para ser más rápido)
+        # Limitar tamaño del árbol y archivos clave
+        tree_txt_limited = tree_txt[:1500]  # Limitar a 1500 caracteres
+        key_files_limited = {k: v[:300] for k, v in list(key_files.items())[:3]}  # Solo 3 archivos, 300 chars cada uno
+        
+        prompt = f"""Genera diagrama Mermaid de arquitectura.
 
-Estructura del repositorio:
-{tree_txt}
+Estructura del repo:
+{tree_txt_limited}
 
-Archivos clave (extractos):
-{json.dumps(key_files, ensure_ascii=False, indent=2)}
+Archivos clave:
+{json.dumps(key_files_limited, ensure_ascii=False)}
 
-Genera UN diagrama MERMAID (usa flowchart TD o graph TD) que muestre SOLO lo que realmente existe en el repositorio:
+Reglas:
+- Solo componentes que existen
+- Diagrama simple y claro
+- Formato: flowchart TD
 
-REGLAS ESTRICTAS:
-- SOLO incluye componentes, archivos, módulos o servicios que realmente existen en la estructura mostrada arriba
-- NO inventes ni asumas componentes que no están presentes
-- Si el repositorio solo tiene un README, muestra solo el README
-- Si no hay servicios, controladores o bases de datos, NO los incluyas
-- Si hay archivos de configuración (package.json, requirements.txt, Dockerfile, etc.), inclúyelos
-- Si hay directorios con código, muéstralos como módulos
-- Las relaciones deben basarse en imports, dependencias o estructura real del código
-
-Genera el diagrama mostrando:
-1. Archivos y directorios principales que existen
-2. Relaciones entre archivos basadas en imports o dependencias reales (si las hay)
-3. Configuraciones o dependencias externas mencionadas en archivos de configuración
-4. NADA MÁS - solo lo que realmente existe
-
-IMPORTANTE: 
-- Devuelve SOLO el código Mermaid, sin explicaciones adicionales
-- Si el repositorio es muy simple, el diagrama será simple (está bien)
-- NO inventes componentes para hacer el diagrama más complejo
-- Usa nombres descriptivos y claros para los nodos
-- Incluye estilos básicos si es necesario
-- El diagrama debe ser claro y legible
-
-Formato esperado:
-```mermaid
-flowchart TD
-    ...
-```"""
+Código Mermaid:"""
 
         # Llamar a Ollama
         llm_output = call_ollama(prompt)

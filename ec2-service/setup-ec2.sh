@@ -103,37 +103,26 @@ sleep 5
 # Descargar modelo (detectar tipo de instancia)
 INSTANCE_TYPE=$(curl -s http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo "unknown")
 
-# Instancias con 8GB RAM necesitan modelo quantizado
+# Usar modelo optimizado para velocidad (llama3.2:3b-instruct-q4_0)
+# Este modelo es más rápido que llama3:8b y funciona bien en todas las instancias
+echo "📥 Descargando modelo optimizado llama3.2:3b-instruct-q4_0 (más rápido)..."
+ollama pull llama3.2:3b-instruct-q4_0
+
+# Verificar que el modelo se descargó
+if ollama list | grep -q "llama3.2:3b-instruct-q4_0"; then
+    echo "✅ Modelo optimizado descargado correctamente"
+    export OLLAMA_MODEL="llama3.2:3b-instruct-q4_0"
+else
+    echo "❌ Error al descargar modelo optimizado"
+    exit 1
+fi
+
+# Configurar Ollama para bajo consumo (especialmente para instancias pequeñas)
 if [[ "$INSTANCE_TYPE" =~ ^t[23]\.(large|xlarge)$ ]]; then
-    echo "⚠️  Instancia con 8GB RAM detectada ($INSTANCE_TYPE) - usando modelo quantizado"
-    echo "📥 Descargando modelo quantizado llama3:8b-instruct-q4_0 (esto puede tardar)..."
-    ollama pull llama3:8b-instruct-q4_0
-    
-    # Verificar que el modelo se descargó
-    if ollama list | grep -q "llama3:8b-instruct-q4_0"; then
-        echo "✅ Modelo quantizado descargado correctamente"
-        export OLLAMA_MODEL="llama3:8b-instruct-q4_0"
-    else
-        echo "❌ Error al descargar modelo quantizado"
-        exit 1
-    fi
-    
-    # Configurar Ollama para bajo consumo
+    echo "⚠️  Instancia con 8GB RAM detectada ($INSTANCE_TYPE) - optimizando configuración"
     export OLLAMA_NUM_THREAD=2
     export OLLAMA_MAX_LOADED_MODELS=1
     echo "✅ Configuración optimizada para $INSTANCE_TYPE"
-else
-    echo "📥 Descargando modelo estándar llama3 (esto puede tardar varios minutos)..."
-    ollama pull llama3
-    
-    # Verificar que el modelo se descargó
-    if ollama list | grep -q llama3; then
-        echo "✅ Modelo llama3 descargado correctamente"
-        export OLLAMA_MODEL="llama3"
-    else
-        echo "❌ Error al descargar modelo llama3"
-        exit 1
-    fi
 fi
 
 # Detectar directorio de trabajo (donde está el script)
@@ -158,12 +147,8 @@ pip3 install -r requirements.txt
 CURRENT_USER=$(whoami)
 echo "👤 Usando usuario: $CURRENT_USER"
 
-# Determinar modelo según tipo de instancia
-if [[ "$INSTANCE_TYPE" =~ ^t[23]\.(large|xlarge)$ ]]; then
-    OLLAMA_MODEL="llama3:8b-instruct-q4_0"
-else
-    OLLAMA_MODEL="llama3"
-fi
+# Usar modelo optimizado para todas las instancias
+OLLAMA_MODEL="llama3.2:3b-instruct-q4_0"
 
 # Crear servicio systemd
 echo "🔧 Configurando servicio systemd..."
@@ -180,7 +165,7 @@ WorkingDirectory=$APP_DIR
 Environment="OLLAMA_API_URL=http://localhost:11434"
 Environment="OLLAMA_MODEL=$OLLAMA_MODEL"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 1200
 Restart=always
 RestartSec=10
 StandardOutput=journal
