@@ -19,8 +19,8 @@ app = FastAPI(
 )
 
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-# Modelo optimizado para velocidad: llama3.2:3b-instruct-q4_0 (más rápido que llama3:8b)
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
+# Modelo especializado en código: deepseek-coder:1.3b-instruct-q4_0 (más rápido y mejor para código/Mermaid)
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-coder:1.3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
 MAX_TREE_LINES = 200  # Balance entre velocidad y contexto
