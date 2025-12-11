@@ -23,8 +23,8 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 200  # Balance entre velocidad y contexto
-MAX_FILE_SIZE_KB = 40  # Balance entre velocidad y contexto
+MAX_TREE_LINES = 500  # Aumentado para diagramas más completos
+MAX_FILE_SIZE_KB = 50  # Aumentado para más contexto
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -198,7 +198,7 @@ def call_ollama(prompt: str) -> str:
                 "stream": False,
                 "options": {
                     "temperature": 0.1,  # Reducido para ser más determinista y evitar alucinaciones
-                    "num_predict": 800  # Aumentado para permitir diagramas más completos
+                    "num_predict": 2000  # Aumentado significativamente para diagramas grandes y completos
                 }
             },
             timeout=1200  # 20 minutos para repositorios muy grandes
@@ -310,10 +310,9 @@ def analyze(req: AnalyzeRequest):
         tree_txt = repo_tree_text(tmp, max_depth=req.depth)
         key_files = read_key_files(tmp, max_depth=req.depth)
         
-        # Construir prompt optimizado para evitar alucinaciones
-        # Incluir más contexto pero limitado
-        tree_txt_limited = tree_txt[:2500]  # Aumentado para más contexto
-        key_files_limited = {k: v[:500] for k, v in list(key_files.items())[:7]}  # Más archivos para mejor contexto
+        # Construir prompt optimizado - incluir más contexto para diagramas completos
+        tree_txt_limited = tree_txt[:5000]  # Aumentado significativamente para diagramas más completos
+        key_files_limited = {k: v[:800] for k, v in list(key_files.items())[:15]}  # Más archivos y más contenido
         
         prompt = f"""Genera un diagrama Mermaid SOLO con lo que EXISTE en este repositorio.
 
@@ -341,10 +340,13 @@ REGLAS ABSOLUTAS:
    - Cada relación en su propia línea
    - NO mezcles tipos de nodos: usa solo [ ] para todos
 
-3. VALIDACIÓN DE RELACIONES:
-   - Solo crea relaciones si hay jerarquía real (B está dentro de A)
-   - Si drivers/ contiene pom.xml, entonces: A[drivers] --> B[pom.xml]
-   - NO inventes relaciones que no existen en la estructura
+3. GENERA UN DIAGRAMA COMPLETO:
+   - Incluye TODOS los directorios principales que aparecen en la estructura
+   - Incluye TODOS los archivos importantes (pom.xml, package.json, README, etc.)
+   - Crea relaciones jerárquicas: si B está dentro de A, entonces A --> B
+   - Crea relaciones entre módulos relacionados (drivers, payments, rides, users si existen)
+   - El diagrama debe ser COMPLETO, no minimalista
+   - Incluye al menos 10-20 nodos si hay suficiente estructura
 
 4. ANTES DE RESPONDER, VERIFICA:
    ✓ ¿Empieza con "flowchart TD"?
@@ -353,14 +355,40 @@ REGLAS ABSOLUTAS:
    ✓ ¿Todos los nombres existen en la estructura?
    ✓ ¿No hay componentes inventados?
 
-EJEMPLO CORRECTO:
+EJEMPLO CORRECTO (diagrama completo):
 ```mermaid
-flowchart TD
-    A[drivers]
-    B[payments]
-    C[rides]
-    D[users]
-    A --> E[pom.xml]
+graph TB
+    Amazon_API_Gateway[Amazon API Gateway]
+    backend_data[Backend Data]
+    drivers[Drivers Service]
+    payments[Payments Service]
+    rides[Rides Service]
+    users[Users Service]
+
+    %% Flujo principal
+    Amazon_API_Gateway --> backend_data
+
+    backend_data --> drivers
+    backend_data --> payments
+    backend_data --> rides
+    backend_data --> users
+
+    %% Dependencias Maven
+    drivers --> drivers_pom_dep[drivers/dependency-reduced-pom.xml]
+    payments --> payments_pom_dep[payments/dependency-reduced-pom.xml]
+    rides --> rides_pom_dep[rides/dependency-reduced-pom.xml]
+    users --> users_pom_dep[users/dependency-reduced-pom.xml]
+
+    drivers --> drivers_pom[drivers/pom.xml]
+    payments --> payments_pom[payments/pom.xml]
+    rides --> rides_pom[rides/pom.xml]
+    users --> users_pom[users/pom.xml]
+
+    %% API REST expuesta por API Gateway
+    Amazon_API_Gateway --> drivers
+    Amazon_API_Gateway --> payments
+    Amazon_API_Gateway --> rides
+    Amazon_API_Gateway --> users
 ```
 
 EJEMPLO INCORRECTO (NO hagas esto):
@@ -370,6 +398,10 @@ flowchart TD
     B --- C[Database]
 ```
 (INCORRECTO: componentes inventados y sintaxis incorrecta)
+
+IMPORTANTE: Genera un diagrama COMPLETO que incluya todos los componentes principales. 
+No seas minimalista - incluye todos los directorios, módulos y archivos importantes.
+El diagrama debe ser útil y completo, mostrando la estructura real del repositorio.
 
 Genera SOLO el código Mermaid válido y verificado, sin explicaciones:"""
 
