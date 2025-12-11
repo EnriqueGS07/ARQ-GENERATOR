@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Architecture Generator</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1000.0.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Architecture Generator</h1>
+        <p class="subtitle">
+          Genera diagramas de arquitectura desde repositorios Git
+        </p>
+      </header>
+
+      <div class="main-content">
+        <div class="input-section">
+          <div class="form-group">
+            <label for="repoUrl">URL del Repositorio Git</label>
+            <input
+              type="text"
+              id="repoUrl"
+              placeholder="https://github.com/usuario/repositorio.git"
+              value=""
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="depth">Profundidad (1-3)</label>
+            <input type="number" id="depth" min="1" max="3" value="1" />
+          </div>
+
+          <button id="analyzeBtn" class="btn btn-primary">
+            <span class="btn-text">Analizar Repositorio</span>
+          </button>
+        </div>
+
+        <div id="status" class="status-message" style="display: none"></div>
+
+        <div id="diagramSection" class="diagram-section" style="display: none">
+          <div class="diagram-header">
+            <h2>Diagrama Generado</h2>
+            <div class="diagram-actions">
+              <button id="copyBtn" class="btn btn-secondary">
+                📋 Copiar Código
+              </button>
+              <button id="downloadBtn" class="btn btn-secondary">
+                💾 Descargar SVG
+              </button>
+            </div>
+          </div>
+
+          <div id="mermaidContainer" class="mermaid-container"></div>
+
+          <div class="code-section">
+            <label for="mermaidCode">Código Mermaid</label>
+            <textarea
+              id="mermaidCode"
+              readonly
+              rows="10"
+              placeholder="El código Mermaid aparecerá aquí..."
+            ></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div id="s3Modal" class="modal" style="display: none">
+        <div class="modal-content">
+          <span class="close">&times;</span>
+          <h2>Subir Diagrama a S3</h2>
+          <div class="form-group">
+            <label for="s3Bucket">Bucket S3</label>
+            <input type="text" id="s3Bucket" placeholder="mi-bucket" />
+          </div>
+          <div class="form-group">
+            <label for="s3Key">Key (ruta en S3)</label>
+            <input
+              type="text"
+              id="s3Key"
+              placeholder="diagramas/diagrama.svg"
+              value="diagramas/diagrama.svg"
+            />
+          </div>
+          <div class="form-group">
+            <label for="s3Region">Región</label>
+            <input
+              type="text"
+              id="s3Region"
+              placeholder="us-east-1"
+              value="us-east-1"
+            />
+          </div>
+          <div class="form-group">
+            <label for="awsAccessKey">AWS Access Key ID</label>
+            <input type="text" id="awsAccessKey" placeholder="AKIA..." />
+          </div>
+          <div class="form-group">
+            <label for="awsSecretKey">AWS Secret Access Key</label>
+            <input type="password" id="awsSecretKey" placeholder="..." />
+          </div>
+          <div class="form-group">
+            <button id="uploadBtn" class="btn btn-primary">Subir a S3</button>
+            <button id="cancelBtn" class="btn btn-secondary">Cancelar</button>
+          </div>
+          <div id="s3Status" class="status-message" style="display: none"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
