@@ -23,8 +23,8 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 150  # Reducido para ser más rápido
-MAX_FILE_SIZE_KB = 30  # Reducido para ser más rápido
+MAX_TREE_LINES = 200  # Balance entre velocidad y contexto
+MAX_FILE_SIZE_KB = 40  # Balance entre velocidad y contexto
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -166,8 +166,8 @@ def call_ollama(prompt: str) -> str:
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.3,
-                    "num_predict": 500  # Reducido para ser más rápido
+                    "temperature": 0.1,  # Reducido para ser más determinista y evitar alucinaciones
+                    "num_predict": 800  # Aumentado para permitir diagramas más completos
                 }
             },
             timeout=1200  # 20 minutos para repositorios muy grandes
@@ -269,25 +269,50 @@ def analyze(req: AnalyzeRequest):
         tree_txt = repo_tree_text(tmp, max_depth=req.depth)
         key_files = read_key_files(tmp, max_depth=req.depth)
         
-        # Construir prompt optimizado (más corto para ser más rápido)
-        # Limitar tamaño del árbol y archivos clave
-        tree_txt_limited = tree_txt[:1500]  # Limitar a 1500 caracteres
-        key_files_limited = {k: v[:300] for k, v in list(key_files.items())[:3]}  # Solo 3 archivos, 300 chars cada uno
+        # Construir prompt optimizado para evitar alucinaciones
+        # Incluir más contexto pero limitado
+        tree_txt_limited = tree_txt[:2500]  # Aumentado para más contexto
+        key_files_limited = {k: v[:500] for k, v in list(key_files.items())[:7]}  # Más archivos para mejor contexto
         
-        prompt = f"""Genera diagrama Mermaid de arquitectura.
+        prompt = f"""Analiza EXACTAMENTE la estructura del repositorio y genera UN diagrama Mermaid.
 
-Estructura del repo:
+ESTRUCTURA DEL REPOSITORIO (SOLO USA ESTO):
 {tree_txt_limited}
 
-Archivos clave:
-{json.dumps(key_files_limited, ensure_ascii=False)}
+ARCHIVOS CLAVE (SOLO PARA CONTEXTO):
+{json.dumps(key_files_limited, ensure_ascii=False, indent=1)}
 
-Reglas:
-- Solo componentes que existen
-- Diagrama simple y claro
-- Formato: flowchart TD
+INSTRUCCIONES ESTRICTAS - LEE CON CUIDADO:
 
-Código Mermaid:"""
+1. SOLO incluye archivos, directorios o módulos que APARECEN en la estructura de arriba
+2. NO inventes componentes, servicios, bases de datos o módulos que NO están en la lista
+3. Si solo hay un README, el diagrama debe mostrar solo el README
+4. Si no hay servicios web, NO agregues "API", "Server", "Backend" o similares
+5. Si no hay base de datos, NO agregues "Database", "DB", "PostgreSQL", etc.
+6. Las relaciones deben basarse SOLO en la estructura de directorios mostrada
+7. NO asumas tecnologías o frameworks que no están explícitamente en los archivos
+
+FORMATO REQUERIDO:
+- Usa: flowchart TD
+- Nombres de nodos: exactamente como aparecen en la estructura
+- Relaciones: solo si hay subdirectorios o imports reales
+- Estilos: opcionales pero simples
+
+EJEMPLO CORRECTO (si el repo solo tiene README.md):
+```mermaid
+flowchart TD
+    A[README.md]
+```
+
+EJEMPLO INCORRECTO (NO hagas esto):
+```mermaid
+flowchart TD
+    A[API] --> B[Database]
+    A --> C[Frontend]
+```
+(Esto está mal porque no hay evidencia de API, Database o Frontend en la estructura)
+
+Genera SOLO el código Mermaid, sin explicaciones:"""
 
         # Llamar a Ollama
         llm_output = call_ollama(prompt)
