@@ -1,4 +1,3 @@
-# app/main.py
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +18,6 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,17 +30,15 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_0")
 API_KEY = os.getenv("EC2_API_KEY", "")
 MAX_REPO_SIZE_MB = 100
-MAX_TREE_LINES = 300  # Reducido para velocidad
-MAX_FILE_SIZE_KB = 40  # Reducido para velocidad
+MAX_TREE_LINES = 300
+MAX_FILE_SIZE_KB = 40
 
-# Security
 security = HTTPBearer(auto_error=False)
 
 def verify_api_key(
     api_key: Optional[str] = Header(None, alias="X-API-Key"),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> bool:
-    """Verifica la API key"""
     if not API_KEY:
         return True
     
@@ -62,20 +58,10 @@ class AnalyzeRequest(BaseModel):
     depth: int = Field(default=1, ge=1, le=3, description="Profundidad del clone (1-3)")
 
 def validate_repo_url(url: str) -> bool:
-    """Valida que la URL sea un repositorio Git válido"""
     valid_prefixes = ("http://", "https://", "git@", "git://")
     return url.startswith(valid_prefixes) and ("github.com" in url or "gitlab.com" in url or "bitbucket.org" in url or url.endswith(".git"))
 
-# ============================================================================
-# COMPONENTE 1: EXTRACTOR DE ESTRUCTURA DEL REPOSITORIO
-# ============================================================================
-
 def extract_repository_structure(repo_path: str, max_depth: int = 3) -> Dict[str, Any]:
-    """
-    Componente 1: Extractor de estructura del repositorio
-    Analiza estáticamente el repositorio usando GitPython
-    Retorna: estructura de archivos, dependencias, configuraciones y metadatos en formato JSON normalizado
-    """
     structure = {
         "tree": [],
         "key_files": {},
@@ -93,7 +79,6 @@ def extract_repository_structure(repo_path: str, max_depth: int = 3) -> Dict[str
     ]
     ignore_files = {".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".dylib"}
     
-    # Patrones de archivos clave
     config_patterns = [
         "package.json", "requirements.txt", "Dockerfile", "docker-compose.yml",
         "pom.xml", "build.gradle", "Cargo.toml", "go.mod", "composer.json",
@@ -105,34 +90,27 @@ def extract_repository_structure(repo_path: str, max_depth: int = 3) -> Dict[str
     modules = set()
     
     for root, dirs, files in os.walk(repo_path):
-        # Filtrar directorios ignorados
         dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
         
-        # Calcular profundidad
         rel = os.path.relpath(root, repo_path)
         if rel == ".":
             depth = 0
         else:
             depth = len(rel.split(os.sep))
-            # Identificar módulos (directorios principales)
             if depth == 1:
                 modules.add(os.path.basename(root))
         
-        # Limitar profundidad
         if depth > max_depth:
             dirs.clear()
             continue
         
-        # Limitar número de líneas
         if len(lines) >= MAX_TREE_LINES:
             lines.append("  " * (depth + 1) + "... (truncado)")
             break
         
-        # Agregar directorio
         if rel != ".":
             lines.append("  " * depth + os.path.basename(root) + "/")
         
-        # Procesar archivos
         file_count = 0
         for f in sorted(files):
             if file_count >= 20:
@@ -145,25 +123,21 @@ def extract_repository_structure(repo_path: str, max_depth: int = 3) -> Dict[str
             lines.append("  " * (depth + 1) + f)
             file_count += 1
             
-            # Extraer archivos clave y dependencias
             file_path = os.path.join(root, f)
             for pattern in config_patterns:
                 if f.lower() == pattern.lower() or f.lower().startswith(pattern.lower()):
                     try:
                         if os.path.getsize(file_path) <= max_file_size:
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as fh:
-                                content = fh.read(2000)  # Primeros 2000 caracteres
+                                content = fh.read(2000)
                                 rel_path = os.path.relpath(file_path, repo_path)
                                 structure["key_files"][rel_path] = content
                                 
-                                # Detectar tipo de archivo de configuración
                                 if pattern in ["pom.xml", "build.gradle", "package.json", "go.mod"]:
                                     structure["config_files"].append(rel_path)
-                                    # Extraer dependencias básicas
                                     if "dependency" in content.lower() or "dependencies" in content.lower():
                                         structure["dependencies"][rel_path] = "detected"
                                     
-                                    # Detectar tecnologías
                                     if "pom.xml" in pattern or "build.gradle" in pattern:
                                         structure["technologies"].append("Java")
                                     elif "package.json" in pattern:
@@ -178,16 +152,11 @@ def extract_repository_structure(repo_path: str, max_depth: int = 3) -> Dict[str
     
     structure["tree"] = "\n".join(lines)
     structure["modules"] = sorted(list(modules))
-    structure["technologies"] = list(set(structure["technologies"]))  # Eliminar duplicados
+    structure["technologies"] = list(set(structure["technologies"]))
     
     return structure
 
-# ============================================================================
-# COMPONENTE 2: PROCESADOR DE LENGUAJE (Razonamiento Estructural)
-# ============================================================================
-
 def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
-    """Llama a la API de Ollama"""
     try:
         health_check = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
         if health_check.status_code != 200:
@@ -196,7 +165,6 @@ def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
                 detail=f"Ollama no está disponible en {OLLAMA_API_URL}"
             )
         
-        # Verificar que el modelo esté disponible
         models_response = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
         if models_response.status_code == 200:
             models_data = models_response.json()
@@ -222,7 +190,7 @@ def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
                 "options": {
                     "temperature": 0.1,
                     "num_predict": max_tokens,
-                    "num_thread": 2  # Optimizado para t3.large
+                    "num_thread": 2
                 }
             },
             timeout=1200
@@ -243,26 +211,19 @@ def call_ollama(prompt: str, max_tokens: int = 2000) -> str:
         raise HTTPException(status_code=503, detail=f"Error al conectar con Ollama: {str(e)}")
 
 def generate_mermaid_directly(structure: Dict[str, Any]) -> str:
-    """
-    Componente 2 y 3 combinados: Genera diagrama Mermaid directamente
-    Optimizado para velocidad - una sola llamada al LLM
-    """
-    tree_summary = structure["tree"][:2000]  # Reducido para ser más rápido
+    tree_summary = structure["tree"][:2000]
     modules = structure["modules"]
     technologies = structure["technologies"]
     
-    # Construir lista de componentes reales (solo nombres, sin duplicados)
     components_list = []
     seen = set()
     
-    # Agregar módulos
     for module in modules:
         if module and module not in seen:
             components_list.append(module)
             seen.add(module.lower())
     
-    # Agregar directorios principales del árbol
-    for line in tree_summary.split('\n')[:50]:  # Solo primeras 50 líneas
+    for line in tree_summary.split('\n')[:50]:
         line = line.strip()
         if line and not line.startswith('.') and '/' in line:
             dir_name = line.split('/')[0].strip()
@@ -270,8 +231,7 @@ def generate_mermaid_directly(structure: Dict[str, Any]) -> str:
                 components_list.append(dir_name)
                 seen.add(dir_name.lower())
     
-    # Agregar archivos clave importantes
-    for file_path in list(structure["key_files"].keys())[:5]:  # Solo 5 archivos
+    for file_path in list(structure["key_files"].keys())[:5]:
         file_name = os.path.basename(file_path)
         if file_name and file_name.lower() not in seen:
             components_list.append(file_name)
@@ -325,18 +285,12 @@ Genera SOLO el código Mermaid válido usando los nombres REALES de los componen
     llm_output = call_ollama(prompt, max_tokens=2000)
     mermaid_code = extract_mermaid_code(llm_output)
     
-    # Asegurar que empiece con flowchart TD
     if not mermaid_code.strip().startswith(('flowchart', 'graph')):
         mermaid_code = "flowchart TD\n" + mermaid_code
     
     return mermaid_code
 
-# ============================================================================
-# COMPONENTE 3: GENERADOR DE DIAGRAMAS
-# ============================================================================
-
 def extract_mermaid_code(text: str) -> str:
-    """Extrae el código Mermaid del texto generado por el LLM"""
     mermaid_patterns = [
         r"```mermaid\s*\n(.*?)```",
         r"```\s*\n(.*?)```",
@@ -351,7 +305,6 @@ def extract_mermaid_code(text: str) -> str:
             if any(keyword in code.lower() for keyword in ["graph", "flowchart"]):
                 return code
     
-    # Buscar líneas que parezcan mermaid
     lines = text.split("\n")
     mermaid_lines = []
     in_mermaid = False
@@ -374,14 +327,8 @@ def extract_mermaid_code(text: str) -> str:
     
     return text.strip()
 
-
-# ============================================================================
-# ENDPOINT PRINCIPAL
-# ============================================================================
-
 @app.post("/analyze", dependencies=[Depends(verify_api_key)])
 def analyze(req: AnalyzeRequest):
-    """Analiza un repositorio Git y genera un diagrama Mermaid de arquitectura"""
     if not validate_repo_url(req.repo_url):
         raise HTTPException(
             status_code=400, 
@@ -391,7 +338,6 @@ def analyze(req: AnalyzeRequest):
     tmp = tempfile.mkdtemp(prefix="repo_analyze_")
     
     try:
-        # Clonar repositorio
         try:
             Repo.clone_from(
                 req.repo_url, 
@@ -405,12 +351,11 @@ def analyze(req: AnalyzeRequest):
                 detail=f"Error al clonar repositorio: {str(e)}"
             )
         
-        # Verificar tamaño
         total_size = sum(
             os.path.getsize(os.path.join(dirpath, filename))
             for dirpath, dirnames, filenames in os.walk(tmp)
             for filename in filenames
-        ) / (1024 * 1024)  # MB
+        ) / (1024 * 1024)
         
         if total_size > MAX_REPO_SIZE_MB:
             raise HTTPException(
@@ -418,10 +363,7 @@ def analyze(req: AnalyzeRequest):
                 detail=f"Repositorio demasiado grande ({total_size:.1f}MB). Máximo: {MAX_REPO_SIZE_MB}MB"
             )
         
-        # PASO 1: Extraer estructura del repositorio
         structure = extract_repository_structure(tmp, max_depth=req.depth)
-        
-        # PASO 2: Generar diagrama Mermaid directamente (optimizado - una sola llamada LLM)
         mermaid_code = generate_mermaid_directly(structure)
         
         return {
@@ -443,7 +385,6 @@ def analyze(req: AnalyzeRequest):
 
 @app.get("/health")
 def health():
-    """Endpoint de salud"""
     try:
         response = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
         ollama_status = "connected" if response.status_code == 200 else "disconnected"
