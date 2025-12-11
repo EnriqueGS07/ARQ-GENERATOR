@@ -8,7 +8,7 @@ Type=simple
 User=ec2-service
 WorkingDirectory=/opt/ec2-service
 Environment="OLLAMA_API_URL=http://localhost:11434"
-Environment="OLLAMA_MODEL=deepseek-coder:1.3b-instruct-q4_0"
+Environment="OLLAMA_MODEL=llama3.2:3b-instruct-q4_0"
 Environment="PYTHONUNBUFFERED=1"
 # Para t2.large: usar --workers 1 (solo 1 worker)
 ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 1200
